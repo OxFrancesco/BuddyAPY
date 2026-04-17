@@ -119,6 +119,16 @@ func TestPoolsOptionsValidate(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() error = nil, want validation error for min-yield > max-yield")
 	}
+
+	err = (PoolsOptions{
+		Lookback: 30 * 24 * time.Hour,
+		RankBy:   RankBySnapshot30dMean,
+		Fuzzy:    true,
+		Limit:    10,
+	}).Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want validation error for fuzzy without symbol")
+	}
 }
 
 func TestSearchPoolsSnapshotFiltersAndRanks(t *testing.T) {
@@ -155,6 +165,67 @@ func TestSearchPoolsSnapshotFiltersAndRanks(t *testing.T) {
 	}
 	if results[0].URL != "https://defillama.com/yields/pool/pool-b" {
 		t.Fatalf("SearchPools() url = %q, want pool URL", results[0].URL)
+	}
+}
+
+func TestSearchPoolsFiltersByExactSymbolComponent(t *testing.T) {
+	t.Parallel()
+
+	api := fakeAPI{
+		pools: []llama.Pool{
+			makePool("pool-a", "uniswap", "Ethereum", "WETH-USDC", false, 15_000_000, floatPtr(4), floatPtr(6), nil),
+			makePool("pool-b", "lido", "Ethereum", "STETH", false, 12_000_000, floatPtr(5), floatPtr(9), nil),
+			makePool("pool-c", "rocket-pool", "Ethereum", "RETH", false, 20_000_000, floatPtr(6), floatPtr(8), nil),
+		},
+	}
+
+	results, err := SearchPools(context.Background(), api, PoolsOptions{
+		MinTVL:   10_000_000,
+		Lookback: 30 * 24 * time.Hour,
+		RankBy:   RankBySnapshot30dMean,
+		Symbol:   "weth",
+		Limit:    10,
+	}, func() time.Time { return time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC) })
+	if err != nil {
+		t.Fatalf("SearchPools() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchPools() len = %d, want 1", len(results))
+	}
+	if results[0].PoolID != "pool-a" {
+		t.Fatalf("SearchPools() pool = %s, want pool-a", results[0].PoolID)
+	}
+}
+
+func TestSearchPoolsFiltersByFuzzySymbol(t *testing.T) {
+	t.Parallel()
+
+	api := fakeAPI{
+		pools: []llama.Pool{
+			makePool("pool-a", "lido", "Ethereum", "STETH", false, 15_000_000, floatPtr(4), floatPtr(9), nil),
+			makePool("pool-b", "rocket-pool", "Ethereum", "RETH", false, 12_000_000, floatPtr(5), floatPtr(8), nil),
+			makePool("pool-c", "etherfi", "Ethereum", "WEETH", false, 20_000_000, floatPtr(6), floatPtr(10), nil),
+			makePool("pool-d", "maple", "Ethereum", "USDC", true, 20_000_000, floatPtr(3), floatPtr(7), nil),
+		},
+	}
+
+	results, err := SearchPools(context.Background(), api, PoolsOptions{
+		MinTVL:   10_000_000,
+		Lookback: 30 * 24 * time.Hour,
+		RankBy:   RankBySnapshot30dMean,
+		Symbol:   "eth",
+		Fuzzy:    true,
+		Chain:    "ethereum",
+		Limit:    10,
+	}, func() time.Time { return time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC) })
+	if err != nil {
+		t.Fatalf("SearchPools() error = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("SearchPools() len = %d, want 3", len(results))
+	}
+	if results[0].PoolID != "pool-c" || results[1].PoolID != "pool-a" || results[2].PoolID != "pool-b" {
+		t.Fatalf("SearchPools() order = [%s, %s, %s], want [pool-c, pool-a, pool-b]", results[0].PoolID, results[1].PoolID, results[2].PoolID)
 	}
 }
 
@@ -335,6 +406,20 @@ func TestParseOptionalFloat(t *testing.T) {
 	}
 	if value != nil {
 		t.Fatalf("parseOptionalFloat(empty) = %v, want nil", value)
+	}
+}
+
+func TestMatchesSymbol(t *testing.T) {
+	t.Parallel()
+
+	if !matchesSymbol("WETH-USDC", "weth", false) {
+		t.Fatal("matchesSymbol() exact component match = false, want true")
+	}
+	if matchesSymbol("WSTETH", "eth", false) {
+		t.Fatal("matchesSymbol() exact fuzzy-like match = true, want false")
+	}
+	if !matchesSymbol("WSTETH", "eth", true) {
+		t.Fatal("matchesSymbol() fuzzy match = false, want true")
 	}
 }
 

@@ -1,8 +1,8 @@
 # BuddyAPY
 
-`buddyapy` is a Go CLI for exploring yield opportunities from the free DefiLlama yields API.
+`buddyapy` is a Go terminal explorer for yield opportunities from the free DefiLlama yields API.
 
-It supports ranked pool searches, pool history lookups, stablecoin filtering, TVL thresholds, yield band filters, JSON output, and direct links to the DefiLlama pool page for each result.
+It now ships with a full-screen TUI for interactive discovery plus the original CLI commands for scripting, JSON output, and shell workflows.
 
 ## Install
 
@@ -19,6 +19,14 @@ go run ./cmd/buddyapy --help
 ```
 
 ## Quick Start
+
+Launch the interactive explorer:
+
+```bash
+go run ./cmd/buddyapy tui
+```
+
+The TUI keeps a cached `/pools` snapshot in memory, reruns cheap filters locally, and loads chart history lazily for the selected pool.
 
 Top stablecoin yields in the last 30 days with at least $10M TVL:
 
@@ -44,6 +52,19 @@ go run ./cmd/buddyapy pools \
   --limit 5
 ```
 
+Search Ethereum-related symbols with fuzzy matching:
+
+```bash
+go run ./cmd/buddyapy pools \
+  --chain Ethereum \
+  --symbol eth \
+  --fuzzy \
+  --min-tvl 10m \
+  --lookback 30d \
+  --rank-by snapshot-30d-mean \
+  --limit 20
+```
+
 Inspect one pool:
 
 ```bash
@@ -60,6 +81,31 @@ go run ./cmd/buddyapy pools --stablecoin --min-tvl 10m --json
 
 ## Commands
 
+### `buddyapy tui`
+
+Interactive dashboard with three panes:
+
+- filter editor
+- ranked results table
+- selected-pool details with APY/TVL mini charts
+
+Keybindings:
+
+- `Tab` / `Shift+Tab` cycle panes
+- `Enter` edits the focused filter or jumps from the results table into details
+- `Space` toggles boolean filters
+- `/` jumps directly to the symbol filter
+- `c` clears the focused filter
+- `C` clears all filters
+- `r` refreshes live data and reruns the search
+- `q` quits
+
+Refresh behavior:
+
+- cheap filters rerun automatically against the cached `/pools` snapshot
+- `chart-mean` mode is treated as expensive and requires `r` to rerun
+- selected-pool chart history loads lazily and is cached by pool ID
+
 ### `buddyapy pools`
 
 Ranks pools after applying client-side filters over the live `/pools` response.
@@ -72,6 +118,8 @@ Supported flags:
 - `--rank-by`
 - `--min-yield`
 - `--max-yield`
+- `--symbol`
+- `--fuzzy`
 - `--chain`
 - `--project`
 - `--limit`
@@ -97,6 +145,8 @@ Notes:
 
 - `snapshot-30d-mean` only works with `--lookback 30d`
 - `--min-yield` and `--max-yield` apply to the selected ranking metric
+- `--symbol` filters by pool symbol; exact mode matches full symbols or symbol legs like `WETH` in `WETH-USDC`
+- `--fuzzy` applies substring matching to `--symbol`, so `eth` can match `steth`, `wsteth`, `weeth`, `reth`, and similar names
 - the `url` column points to the DefiLlama pool page for that row
 
 ## Development

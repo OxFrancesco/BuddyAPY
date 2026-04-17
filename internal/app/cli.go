@@ -60,28 +60,39 @@ func runPools(ctx context.Context, args []string, stdout, stderr io.Writer, cfg 
 		fs.PrintDefaults()
 	}
 
-	var (
-		stablecoin  bool
-		minTVLRaw   string
-		lookbackRaw = "30d"
-		rankByRaw   = string(RankBySnapshot30dMean)
-		minYieldRaw string
-		maxYieldRaw string
-		chain       string
-		project     string
-		limit       = defaultPoolsLimit
-		jsonOutput  bool
-	)
+	state := DefaultFilterState()
+	jsonOutput := false
 
-	fs.BoolVar(&stablecoin, "stablecoin", false, "only include pools marked as stablecoin")
-	fs.StringVar(&minTVLRaw, "min-tvl", "", "minimum TVL in USD (supports k, m, b suffixes)")
-	fs.StringVar(&lookbackRaw, "lookback", lookbackRaw, "lookback window (for example 30d, 7d, 48h)")
-	fs.StringVar(&rankByRaw, "rank-by", rankByRaw, "ranking metric: snapshot-30d-mean, chart-mean, current-apy")
-	fs.StringVar(&minYieldRaw, "min-yield", "", "minimum yield for the selected ranking metric")
-	fs.StringVar(&maxYieldRaw, "max-yield", "", "maximum yield for the selected ranking metric")
-	fs.StringVar(&chain, "chain", "", "exact chain filter (case-insensitive)")
-	fs.StringVar(&project, "project", "", "exact project filter (case-insensitive)")
-	fs.IntVar(&limit, "limit", limit, "maximum number of results to return")
+	for _, definition := range PoolFilterDefinitions() {
+		switch definition.ID {
+		case FilterStablecoin, FilterFuzzy:
+			current := state.BoolValue(definition.ID)
+			switch definition.ID {
+			case FilterStablecoin:
+				fs.BoolVar(&state.Stablecoin, definition.FlagName, current, definition.Help)
+			case FilterFuzzy:
+				fs.BoolVar(&state.Fuzzy, definition.FlagName, current, definition.Help)
+			}
+		case FilterMinTVL:
+			fs.StringVar(&state.MinTVL, definition.FlagName, state.MinTVL, definition.Help)
+		case FilterLookback:
+			fs.StringVar(&state.Lookback, definition.FlagName, state.Lookback, definition.Help)
+		case FilterRankBy:
+			fs.StringVar(&state.RankBy, definition.FlagName, state.RankBy, definition.Help)
+		case FilterMinYield:
+			fs.StringVar(&state.MinYield, definition.FlagName, state.MinYield, definition.Help)
+		case FilterMaxYield:
+			fs.StringVar(&state.MaxYield, definition.FlagName, state.MaxYield, definition.Help)
+		case FilterSymbol:
+			fs.StringVar(&state.Symbol, definition.FlagName, state.Symbol, definition.Help)
+		case FilterChain:
+			fs.StringVar(&state.Chain, definition.FlagName, state.Chain, definition.Help)
+		case FilterProject:
+			fs.StringVar(&state.Project, definition.FlagName, state.Project, definition.Help)
+		case FilterLimit:
+			fs.StringVar(&state.Limit, definition.FlagName, state.Limit, definition.Help)
+		}
+	}
 	fs.BoolVar(&jsonOutput, "json", false, "output results as JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -91,34 +102,12 @@ func runPools(ctx context.Context, args []string, stdout, stderr io.Writer, cfg 
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
 
-	minTVL, err := parseUSDValue(minTVLRaw)
+	options, err := state.ToPoolsOptions()
 	if err != nil {
-		return fmt.Errorf("parse --min-tvl: %w", err)
-	}
-	lookback, err := parseLookback(lookbackRaw)
-	if err != nil {
-		return fmt.Errorf("parse --lookback: %w", err)
-	}
-	minYield, err := parseOptionalFloat(minYieldRaw)
-	if err != nil {
-		return fmt.Errorf("parse --min-yield: %w", err)
-	}
-	maxYield, err := parseOptionalFloat(maxYieldRaw)
-	if err != nil {
-		return fmt.Errorf("parse --max-yield: %w", err)
+		return err
 	}
 
-	results, err := SearchPools(ctx, resolveAPI(cfg), PoolsOptions{
-		Stablecoin: stablecoin,
-		MinTVL:     minTVL,
-		Lookback:   lookback,
-		RankBy:     RankBy(rankByRaw),
-		MinYield:   minYield,
-		MaxYield:   maxYield,
-		Chain:      chain,
-		Project:    project,
-		Limit:      limit,
-	}, resolveNow(cfg))
+	results, err := SearchPools(ctx, resolveAPI(cfg), options, resolveNow(cfg))
 	if err != nil {
 		return err
 	}
@@ -190,6 +179,10 @@ func resolveAPI(cfg Config) API {
 	return llama.NewClient(baseURL, cfg.HTTPClient)
 }
 
+func ResolveAPI(cfg Config) API {
+	return resolveAPI(cfg)
+}
+
 func resolveNow(cfg Config) func() time.Time {
 	if cfg.Now != nil {
 		return cfg.Now
@@ -197,6 +190,10 @@ func resolveNow(cfg Config) func() time.Time {
 	return func() time.Time {
 		return time.Now().UTC()
 	}
+}
+
+func ResolveNow(cfg Config) func() time.Time {
+	return resolveNow(cfg)
 }
 
 func parseUSDValue(raw string) (float64, error) {
@@ -286,4 +283,5 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  buddyapy pools [flags]")
 	fmt.Fprintln(w, "  buddyapy chart --pool <pool-id> [flags]")
+	fmt.Fprintln(w, "  buddyapy tui")
 }

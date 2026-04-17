@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +42,8 @@ type PoolsOptions struct {
 	RankBy     RankBy
 	MinYield   *float64
 	MaxYield   *float64
+	Symbol     string
+	Fuzzy      bool
 	Chain      string
 	Project    string
 	Limit      int
@@ -65,6 +68,9 @@ func (o PoolsOptions) Validate() error {
 	}
 	if o.MinYield != nil && o.MaxYield != nil && *o.MinYield > *o.MaxYield {
 		return errors.New("min-yield cannot be greater than max-yield")
+	}
+	if o.Fuzzy && strings.TrimSpace(o.Symbol) == "" {
+		return errors.New("fuzzy matching requires a symbol query")
 	}
 
 	return nil
@@ -102,6 +108,15 @@ type PoolResult struct {
 }
 
 func SearchPools(ctx context.Context, api API, opts PoolsOptions, now func() time.Time) ([]PoolResult, error) {
+	pools, err := api.Pools(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return SearchPoolsFromPools(ctx, api, pools, opts, now)
+}
+
+func SearchPoolsFromPools(ctx context.Context, api API, pools []llama.Pool, opts PoolsOptions, now func() time.Time) ([]PoolResult, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
@@ -109,17 +124,15 @@ func SearchPools(ctx context.Context, api API, opts PoolsOptions, now func() tim
 		now = time.Now
 	}
 
-	pools, err := api.Pools(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	filtered := filterPools(pools, opts)
 	if len(filtered) == 0 {
 		return []PoolResult{}, nil
 	}
 
-	var results []PoolResult
+	var (
+		results []PoolResult
+		err     error
+	)
 	switch opts.RankBy {
 	case RankBySnapshot30dMean:
 		results = snapshotMeanResults(filtered)
@@ -169,6 +182,7 @@ func filterPools(pools []llama.Pool, opts PoolsOptions) []llama.Pool {
 	filtered := make([]llama.Pool, 0, len(pools))
 	chain := strings.ToLower(strings.TrimSpace(opts.Chain))
 	project := strings.ToLower(strings.TrimSpace(opts.Project))
+	symbol := strings.ToLower(strings.TrimSpace(opts.Symbol))
 
 	for _, pool := range pools {
 		if opts.Stablecoin && !pool.Stablecoin {
@@ -181,6 +195,9 @@ func filterPools(pools []llama.Pool, opts PoolsOptions) []llama.Pool {
 			continue
 		}
 		if project != "" && strings.ToLower(pool.Project) != project {
+			continue
+		}
+		if symbol != "" && !matchesSymbol(pool.Symbol, symbol, opts.Fuzzy) {
 			continue
 		}
 		filtered = append(filtered, pool)
@@ -326,6 +343,43 @@ func newPoolResult(pool llama.Pool, metric string, metricValue float64) PoolResu
 
 func poolPageURL(poolID string) string {
 	return DefaultPoolPageURL + "/" + strings.TrimSpace(poolID)
+}
+
+var symbolPartSplitter = regexp.MustCompile(`[-/|,\s]+`)
+
+func matchesSymbol(poolSymbol, query string, fuzzy bool) bool {
+	poolSymbol = strings.ToLower(strings.TrimSpace(poolSymbol))
+	query = strings.ToLower(strings.TrimSpace(query))
+	if poolSymbol == "" || query == "" {
+		return false
+	}
+	if fuzzy {
+		return strings.Contains(poolSymbol, query)
+	}
+	if poolSymbol == query {
+		return true
+	}
+
+	for _, part := range symbolParts(poolSymbol) {
+		if part == query {
+			return true
+		}
+	}
+
+	return false
+}
+
+func symbolParts(poolSymbol string) []string {
+	parts := symbolPartSplitter.Split(poolSymbol, -1)
+	filtered := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return filtered
 }
 
 func filterResultsByYield(results []PoolResult, minYield, maxYield *float64) []PoolResult {
